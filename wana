@@ -1,0 +1,441 @@
+#!/bin/sh
+
+export POSIXLY_CORRECT=yes
+#ýpis seznamu zdrojových IP adres
+list_ip_b()
+{
+	for i in `echo "$select" | cut -f1 -d" " | sort -u`
+	do
+		echo "$i"
+	done	
+}
+#výpis seznamu zdrojových doménových jmen
+list_hosts_b()
+{
+
+	for i in `echo "$select" | cut -f1 -d" " | sort -u`
+	do
+		hostip=$(host $i)
+		if [ $? -eq 0 ]
+		then
+			echo $(echo $hostip | rev | cut -f1 -d" " | rev)
+		else
+			echo "$i"
+		fi
+	done
+}
+#výpis seznamu cílových zdrojů (URI)
+list_uri_b()
+{
+	for i in `echo "$select" | awk '/HTTP/ { print $7 }' | sort -u`
+	do
+		echo "$i"
+	done
+}
+#výpis histogramu četností dotazů podle zdrojových IP adres
+hist_ip_b()
+{
+	hist=""
+	for i in $(echo "$select" | cut -f1 -d" " | sort | uniq -c | sort -r )
+	do
+		echo $i | grep "^[0-9][0-9]*$" >/dev/null
+			
+		if [ $? -eq 0 ]
+		then
+			counter=$i
+			j=0
+			until [ $j -eq $counter ]
+			do
+				hist=$hist"#"
+				j=`expr $j + 1`
+			done
+		else
+			echo "$i ($counter): $hist"
+			hist=""
+		fi
+	done 
+}
+
+#výpis histogramu zátěže (tj.  počtu dotazů ve jednotlivých časových intervalech)
+hist_load_b()
+{
+	hist=""
+	for i in $(echo "$select" | cut -f4 -d" " | cut -c 2- | rev | cut -c 4- | rev | \
+	awk -F: -v OFS=":" '{$3="00"; print}' | sort | uniq -c)
+	do
+		echo $i | grep "^[0-9][0-9]*$" >/dev/null
+		
+		if [ $? -eq 0 ]
+		then
+			counter=$i
+			j=0
+			until [ $j -eq $counter ]
+			do
+				hist=$hist"#"
+				j=`expr $j + 1`
+			done
+		else
+			year=$(echo $i | awk -F "[/:]" '{print $3}')
+			month=$(echo $i | awk -F "[/]" '{print $2}')
+			case $month in
+		    	Jan) month=01 ;;
+        		Feb) month=02 ;;
+       			Mar) month=03 ;;
+       			Apr) month=04 ;;
+	    		May) month=05 ;;
+       			Jun) month=06 ;;
+       			Jul) month=07 ;;
+       			Aug) month=08 ;;
+       			Sep) month=09 ;;
+       			Oct) month=10 ;;
+       			Nov) month=11 ;;
+       			Dec) month=12 ;;
+			esac
+			day=$(echo $i | awk -F "[/]" '{print $1}')
+			mytime=$(echo $i | awk -F: -v OFS=":" '{print $2,$3}')
+			echo "$year-$month-$day $mytime ($counter): $hist"
+			hist=""
+		fi
+	done
+}
+#porovná data záznamů se zadaným datem a uloží si pouze pozdější data
+a_time_b()
+{
+	yourdate=$(echo $time_a | sed 's/[^0-9]//g')
+	IFS='
+'
+
+	for line in $select
+	do
+		mydate=$(echo $line | cut -f4 -d" " | cut -c 2- | sed "s/Feb/02/g; s/Jan/01/g; s/Mar/03/g; s/Apr/04/g; \
+		s/May/05/g; s/Jun/06/g; s/Jul/07/g; s/Aug/08/g; s/Sep/09/g; s/Oct/10/g; s/Nov/11/g; s/Dec/12/g" | \
+		awk -F[/:] -v OFS="" '{print $3,$2,$1,$4,$5,$6}')
+		if [ $mydate -gt $yourdate ]
+		then
+			if [ -n "$select_a" ]
+			then
+				select_a="$line
+$select_a"
+			else
+				select_a=$line
+			fi
+		fi			
+	
+	done
+	unset IFS
+	select=$select_a
+	if [ -z "$select" ]
+	then
+		exit 0
+	fi
+}
+#porovná data záznamů se zadaným datem a uloží si pouze dřívější data
+b_time_b()
+{
+	yourdate=$(echo $time_b | sed 's/[^0-9]//g')
+	IFS='
+'
+
+
+	for line in `echo "$select"`
+	do
+		mydate=$(echo $line | cut -f4 -d" " | cut -c 2- | sed "s/Feb/02/g; s/Jan/01/g; s/Mar/03/g; s/Apr/04/g; \
+		s/May/05/g; s/Jun/06/g; s/Jul/07/g; s/Aug/08/g; s/Sep/09/g; s/Oct/10/g; s/Nov/11/g; s/Dec/12/g" | \
+		awk -F[/:] -v OFS="" '{print $3,$2,$1,$4,$5,$6}')
+		
+		if [ "$mydate" -lt "$yourdate" ]
+		then
+			if [ -n "$select_b" ]
+			then
+				select_b="$line
+$select_b"
+			else
+				select_b=$line
+			fi
+		fi			
+	
+	done
+	unset IFS
+	select=$select_b
+	if [ -z "$select" ]
+	then
+		exit 0
+	fi
+}
+#porovná ip záznamů se zadanou IP a uloží si pouze odpovídající záznamy
+ip_b()
+{
+	
+	IFS='
+'
+
+	for line in `echo "$select"`
+	do
+		myip=$(echo $line | cut -f1 -d" ")
+		if [ "$myip" = "$par_ip" ]
+		then
+			if [ -n "$select_i" ]
+			then
+				select_i="$line
+$select_i"
+			else
+				select_i=$line
+			fi
+		fi
+				
+	done
+	unset IFS
+	select=$select_i
+	if [ -z "$select" ]
+	then
+		exit 0
+	fi
+}
+#porovná uri záznamů se zadanou uri a uloží si pouze odpovídající záznamy
+uri_b()
+{
+
+	IFS='
+'
+	youruri=$(echo $par_uri | sed s'/\\//g')
+	for line in `echo "$select"`
+	do
+
+		myuri=$(echo $line | awk '/HTTP/ { print $7 }')
+		if [ "$myuri" = "$youruri" ]
+		then
+			if [ -n "$select_u" ]
+			then
+				select_u="$line
+$select_u"
+			else
+				select_u=$line
+			fi
+		fi
+					
+	done
+	unset IFS
+	select=$select_u
+	if [ -z "$select" ]
+	then
+		exit 0
+	fi
+	
+}
+
+#kontroluje, zda byl zadaný filtr
+check_filters()
+{
+	case "$1" in
+	"-a")
+		filter_a=1 
+		check_time=1
+	;;	
+	"-b")
+		filter_b=1
+		check_time=2
+	;;
+		
+	"-ip") 
+		filter_c=1
+	 	check_ip=1
+	 ;;
+	"-uri")
+		filter_d=1
+	 	check_uri=1
+	 ;;
+	*) 
+		filters=1
+		com=0
+	 ;;
+esac
+}
+#kontroluje, zda je zadané datum správné
+is_time()
+{
+	echo "$1" | grep "^[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9] [0-2][0-9]:[0-5][0-9]:[0-5][0-9]$" >/dev/null
+	if [ $? -eq 0 ]
+	then
+		is_mon=$(echo "$1" | cut -f2 -d"-")
+		is_day=$(echo "$1" | cut -f3 -d"-" | cut -f1 -d" ")
+		is_hour=$(echo "$1" | cut -f2 -d" " | cut -f1 -d":")
+		if [ $is_mon -gt 12 -o $is_mon -eq 00 -o $is_day -gt 31 -o $is_day -eq 00 -o $is_hour -gt 23 ]
+		then
+			echo "ERROR: Neexistující datum" 1>&2
+			exit 1
+		fi
+	else
+		echo "ERROR: Špatný formát data" 1>&2
+		exit 1
+	fi
+	if [ $check_time -eq 1 ]
+	then
+		time_a=$1
+	else
+		time_b=$1
+	fi
+	check_time=0
+}
+#kontroluje, zda je zadaná ip ve správném formátu
+is_ip()
+{
+	echo "$1" | grep "^[0-9]\+.[0-9]\+.[0-9]\+.[0-9]\+$" >/dev/null
+	if [ $? -eq 1 ]
+	then
+		echo "$1" | grep "^[0-9,a-Z]*:[0-9,a-Z]*:*[0-9,a-Z]*:*[0-9,a-Z]*:*[0-9,a-Z]*:*[0-9,a-Z]*:*[0-9,a-Z]*:[0-9,a-Z]*$" >/dev/null
+		
+		if [ $? -eq 1 ]
+		then
+			echo "ERROR: Špatný formát ip adresy" 1>&2
+			exit 1
+		fi
+	fi
+	check_ip=0	
+	par_ip=$1
+}
+#kontroluje, zda byla zadána uri
+is_uri()
+{
+	echo "$1" | grep ".*" >/dev/null
+	if [ $? -eq 1 ]
+	then
+		echo "ERROR: Není zadána uri" 1>&2
+		exit 1
+	else
+		check_uri=0
+		par_uri=$1
+	fi
+}
+#kontroluje, zda a který příkaz byl zadaný
+check_com()
+{
+	case "$1" in
+	"list-ip") putcom=1	;;
+	"list-hosts") putcom=2;	;;
+	"list-uri") putcom=3 ;;
+	"hist-ip") putcom=4 ;;
+	"hist-load") putcom=5 ;;
+	*)
+		com=1
+		log=0
+	esac
+}
+#kontroluje zda byl zadaný a soubor a jestli lze přečíst
+check_log()
+{
+	if [ -f "$1"  -a -r "$1" ]
+	then
+		if [ $log_exists -eq 0 ]
+		then
+			shift_count=`expr $par_number - 1 `
+		fi
+		log_exists=1
+		
+	else
+		echo "ERROR: Soubor nelze přečíst" 1>&2
+		exit 1
+	fi
+
+}
+
+
+
+
+
+
+select=""
+par_number=0
+shift_count=0
+check_time=0
+check_ip=0
+check_uri=0
+filter_a=0
+filter_b=0
+filter_c=0
+filter_d=0
+filters=0
+com=1
+putcom=0
+log=1
+log_exists=0
+#prochází postupně parametry, volá funkce, ke kontrole jejich správnosti a zadané parametry si pamatuje
+for par
+do
+	par_number=`expr $par_number + 1`
+	if [ $filters -eq 0 ]
+	then	
+		if [ $check_time -eq 1 -o $check_time -eq 2 ]
+		then
+			is_time "$par"
+			continue
+		elif [ $check_ip -eq 1 ]
+		then
+			is_ip "$par"
+			continue
+		elif [ $check_uri -eq 1 ]
+		then
+			is_uri "$par"
+			continue
+		fi
+		check_filters "$par"
+	fi
+	
+	if [ $com -eq 0 ] 
+	then
+		check_com "$par"
+	fi
+
+	if [ $log -eq 0 ]
+	then
+		check_log "$par"
+	fi
+
+done
+#pokud byl zadán log, tak jej rozbalí, pokud je třeba, pokud nebyl zadán, očekává stdin
+if [ $log_exists -eq 1 ]
+then
+
+	shift $shift_count
+	for log
+	do
+		echo "$log" | grep ".\+\.gz" >/dev/null
+		if [ $? -eq 0 ]
+		then
+			unziped=`gunzip -c "$log"`
+			select="$select$unziped"
+		else
+			notziped=$(cat $log)
+			select="$select$notziped"
+
+		fi
+	done
+else
+	select=`cat`
+fi
+#podle zadaných parametrů volá potřebné funkce k jejich zpracování
+if [ $filter_a -eq 1 ]
+then
+	a_time_b
+fi
+if [ $filter_b -eq 1 ]
+then
+	b_time_b
+fi
+if [ $filter_c -eq 1 ]
+then
+	ip_b
+fi
+if [ $filter_d -eq 1 ]
+then
+	uri_b
+fi
+case $putcom in
+	0 )	echo "$select" ;;
+	1 )	list_ip_b ;;
+	2 )	list_hosts_b ;;
+	3 )	list_uri_b ;;	
+	4 ) hist_ip_b ;;
+	5 )	hist_load_b	;;
+esac
+
+exit 0
